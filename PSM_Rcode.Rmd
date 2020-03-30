@@ -1,0 +1,513 @@
+---
+title: "HighNote Propensity Score Matching (PSM) Analysis"
+author: "Joanna Yeh"
+date: "2/21/2020"
+output: html_document
+---
+
+Import packages
+```{r cars}
+library(pastecs)
+library(dplyr)
+library(psych)
+library(purrr)
+library(sqldf)
+library(ggplot2)
+library(GGally)
+library(igraph)
+library(MatchIt)
+library(gridExtra)
+library(tableone)
+```
+
+Import data
+```{r}
+df <- read.csv('HighNote Data.csv')
+head(df)
+```
+
+#1. Summary statistics
+```{r}
+describeBy(df, df$adopter)
+
+free <- df[df$adopter == 0,]
+premium <- df[df$adopter == 1,]
+
+#stat.desc(free)
+#stat.desc(premium)
+
+#t-test
+output = NULL
+for (i in 2:16){
+  if(i == 14) next()
+  name = names(free[i])
+  p_value = t.test(free[i], premium[i])$p.value
+  output <- rbind(output, data.frame(name, p_value))
+}
+print(output)
+
+```
+
+From the above descriptive statistics, there are 40,300 free users (group 0/adopter = 0) and 3527 premium users (group 1/adopter = 1). For premium users, almost all its variables have higher mean values than that of free users. For instance, the average age of premium users is 25.98, older than that of free users, 23.95. It can be inferred that younger users would like to choose free service on High Note platform due to their income or other relevant reasons. In terms of varaibles of avg_friend_cnt and singListened, for instance, the premium users have more average friend count than free users. Also, they listened more songs (songListened variable), which is 33,758 on average, than 17,589 songs listened by free users. In a nutshell, the overall performance of all variables for premium users is better than free users. It can be assumed that premium users, as opposed to free users, are more likely to be loyal on the High Note music platform.
+
+Doing t-test on all variables for adopters (premium users) and non-adopters (free users), p-values of all variables are statistically significant. It means that there are huge difference between two groups, in terms of all variables.
+
+
+#2. Data Visualization
+ (i) demographics
+```{r}
+#age
+library(plyr)
+df$Adopter <- factor(df$adopter, levels = c(0, 1))
+means <- ddply(df, "Adopter", summarise, age.mean = mean(age))
+means
+
+ggplot(df, aes(x = age, group = Adopter, fill = Adopter)) +
+  geom_density(alpha = .3) + 
+  geom_vline(data = means, aes(xintercept = age.mean, colour = Adopter),
+             linetype = "longdash", size=1)
+
+
+#male
+
+df$Male <- factor(df$male, levels = c(0, 1))
+df %>% group_by(Adopter, Male) %>% tally() %>%
+  ggplot(aes(Male, n, group = Adopter, fill = Adopter)) + geom_bar(position = "dodge", stat = "identity") + labs(x = 'male', y = 'count', title = 'Male Count by Adopter') 
+
+
+#good country
+df$Good_country <- factor(df$good_country, levels = c(0, 1))
+
+df %>% group_by(Adopter, Good_country) %>% tally() %>%
+  ggplot(aes(Good_country, n, group = as.factor(Adopter), fill = Adopter)) + geom_bar(position = "dodge", stat = "identity") + labs(x = 'good_country', y = 'count', title = 'Count of Good Country by Adopter') 
+
+ggplot(df, aes(x=Adopter, y = Good_country))+ geom_bar(stat = 'summary', fun.y = 'mean')+xlab("adopter") 
+```
+
+After descriptive statistics, I checked the difference of all variables through visualized plots. First, I looked to the visualization of demographic variables, including age, male, and good country. The age for two types of users are all right skewed, yet the free users are younger than the premium users, in general. As for the number of males, the premium users have more male than free users, while for the users from good country, it seems that free users come from good country more than premium users do.
+
+
+(ii) peer influence
+```{r}
+#mean value of peer influence variables
+col <- c(colnames(df)[4:8], 'adopter')
+peer_mean<- df %>%
+  group_by(adopter) %>%
+  select(one_of(col)) %>%
+  summarise_all(funs(mean)) 
+peer_mean
+
+#distribution
+ggpairs(df[4:8])
+
+#plot mean value to see difference in each variable
+p1<- ggplot(df, aes(x=Adopter, y = friend_cnt, fill = Adopter))+ geom_bar(stat = 'summary', fun.y = 'mean')+xlab("adopter") 
+p2<- ggplot(df, aes(x=Adopter, y = avg_friend_age, fill = Adopter))+ geom_bar(stat = 'summary', fun.y = 'mean')+xlab("adopter")
+p3<-ggplot(df, aes(x=Adopter, y = avg_friend_male, fill = Adopter))+ geom_bar(stat = 'summary', fun.y = 'mean')+xlab("adopter")
+p4<-ggplot(df, aes(x=Adopter, y = friend_country_cnt, fill = Adopter))+ geom_bar(stat = 'summary', fun.y = 'mean')+xlab("adopter")
+p5<-ggplot(df, aes(x=Adopter, y = subscriber_friend_cnt, fill = Adopter))+ geom_bar(stat = 'summary', fun.y = 'mean')+xlab("adopter")
+
+grid.arrange(p1, p2,p3,p4,p5, nrow = 3)
+```
+
+In terms of variables related to peer influence, it includes friend_cnt, avg_friend_age, avg_friend_male, friend_country_cnt, subscriber_friend_cnt. Below is the barplot and distribution of mean values of all variables. They all have skewed distributions, based on the distribution matrix. In overall, the premium users have higher mean values of peer influence than free users have. That is to say premium users are more likely to be affected by their friends and also interact more with their friends as well.
+
+(iii) user engagement
+```{r}
+df %>%
+  group_by(adopter) %>%
+  select(one_of(colnames(df)[9:15])) %>%
+  summarise_all(funs(mean)) 
+
+#distribution
+ggpairs(df[9:13])
+
+#plot mean value to see difference in each variable
+p1<- ggplot(df, aes(x=Adopter, y = songsListened, fill = Adopter))+ geom_bar(stat = 'summary', fun.y = 'mean')+xlab("adopter") 
+p2<- ggplot(df, aes(x=Adopter, y = lovedTracks, fill = Adopter))+ geom_bar(stat = 'summary', fun.y = 'mean')+xlab("adopter")
+p3<-ggplot(df, aes(x=Adopter, y = posts, fill = Adopter))+ geom_bar(stat = 'summary', fun.y = 'mean')+xlab("adopter")
+p4<-ggplot(df, aes(x=Adopter, y = playlists, fill = Adopter))+ geom_bar(stat = 'summary', fun.y = 'mean')+xlab("adopter")
+p5<-ggplot(df, aes(x=Adopter, y = shouts, fill = Adopter))+ geom_bar(stat = 'summary', fun.y = 'mean')+xlab("adopter")
+p6<-ggplot(df, aes(x=Adopter, y = tenure, fill = Adopter))+ geom_bar(stat = 'summary', fun.y = 'mean')+xlab("adopter")
+
+grid.arrange(p1, p2,p3,p4,p5,p6, nrow = 3)
+```
+
+For the user engagement variables, it includes songListened, lovedTracks, posts, playlists, shouts, and tenure. T premium users have higher user engagement than free users, in terms of all mean values of these variables. That is to say, the premium users are more active on the High Note music platform.
+
+#3. Propensity Score Matching (PSM)
+Use PSM to test whether having subscriber friends affects the likelihood of becoming an adopter (i.e. fee customer).
+```{r}
+#split treatment and control group
+df <- read.csv('HighNote Data Midterm.csv')
+df <- mutate(df, treatment = ifelse(subscriber_friend_cnt>=1, 1, 0))
+
+#run t-test before PSM
+with(df, t.test(adopter ~ treatment)) #c-t: 0.052 - 0.178
+
+```
+
+Before doing propensity score matching, first, I split treatment group and control group based on the definition of whether users that have one or more subscriber friends. Then, I did t-test to check if treatment group and control group have significant difference on the behavior of choosing free and premium service (adopter). It ended up getting the p-value with statistically significant. So, two groups are different between adopter variable. The mean value of adopter for treatment group is 0.178 and that of control group is 0.052 or so. Therefore, it is necessary to do propensity score matching to make two groups more balance.
+
+
+#logistic regression for PSM
+To make sure all the other variables are significant to control group and treatment group, I did logistic regression for all variables, excluding variables related to treatment and adopter. According to the distribution plots in the second session, we knew the distributions of all continuous variables are skewed. Thus, I took log transformation before doing logistic regression. The result shows that, if the alpha of model is 0.05, then all variables are significantly correlated to the dependent variable - the treatment. AIC is 31493.
+```{r}
+logit<- glm(treatment ~log(age) + male +log(friend_cnt+1) + log(avg_friend_age+1)  + log(avg_friend_male+1) +
+                       log(friend_country_cnt+1) + log(songsListened+1) + log(lovedTracks+1) + log(posts+1) +
+                       log(playlists+1) + log(shouts+1) + log(tenure+1) + good_country, family = binomial(), data = df)
+summary(logit)
+```
+
+After logistic regression, we use the model to predict propensity scores of treatment and control group.
+```{r}
+#predicted propensity score
+prs_df <- data.frame(pr_score = predict(logit, type = "response"),
+                     treatment = logit$model$treatment)
+head(prs_df)
+ 
+```
+
+I plotted the propensity score by two groups, which refers to the following distribution plots. It shows that the treatment group has consistent number of users among different levels of propensity scores. Yet the control group has right skewed distribution. It has more people with lower propensity score, who are less likely to turning into adopters, that is, premium users.
+```{r}
+#plot histogran of treatment status to examine the region of common support
+labs <- paste("Actual treatment type:", c("Treatment w/ subscriber friends", "Control w/n subscriber friends"))
+prs_df %>%
+  mutate(treatment = ifelse(treatment == 1, labs[1], labs[2])) %>%
+  ggplot(aes(x = pr_score)) +
+  geom_histogram(color = "white") +
+  facet_wrap(~treatment) +
+  xlab("Probability of getting subscriber friends") +
+  theme_bw()
+
+#create a prematching table
+xvars <- colnames(df[!colnames(df) %in% c('ID', 'subscriber_friend_cnt', 'adopter', 'treatment')])
+table1 <- CreateTableOne(vars = xvars, strata = "treatment", data = df, test = FALSE)
+print(table1, smd = TRUE)
+
+```
+
+According to the pre-matching table as below, some variables between treatment group and control group are significantly different, in terms of mean difference. (*When SMD of a variable is larger than 0.1, we can say that this variable between two groups are different.)
+
+
+
+Propensity Score Matching – Method 1: nearest neighbor matching
+After finding differe in the treatment status, use MatchIt to find pairs of observations that have very similar propensity scores
+
+With predicted propensity score from logistic regression, I first used the nearest method to match treatment and control samples. The nearest method is to pair a treated subject to a control who is close in terms of its distance in covariate space. The result shows that 9823 samples got matched. For all data without matching, the distances (= propensity score) between treatment and control are 0.4982 and 0.1450. However, the distances of matched data between treatment and control are 0,4982 and 0.3447. The mean difference of distance of the matched data is 0.1535, lower than the distance of all data, 0.3532. There are 56.54% balance improvement of mean different of distance.
+```{r}
+#checl null value and omit
+sum(is.na(df)) #no null value
+
+#matchit
+mod_match <- matchit(treatment ~ log(age) + male +log(friend_cnt+1) + log(avg_friend_age+1)  + log(avg_friend_male+1) + log(friend_country_cnt+1) + log(songsListened+1) + log(lovedTracks+1) + log(posts+1) + log(playlists+1) + log(shouts+1) + log(tenure+1) + good_country, method = 'nearest', data = df)
+                   
+summary(mod_match, covariates = T)
+
+#plot(mod_match)
+
+#create df to save match data
+dta_m <- match.data(mod_match)
+dim(dta_m)
+
+#create a TableOne to see Standardized Mean Difference
+match_table <- CreateTableOne(vars = xvars, strata = "treatment", data = dta_m, test = FALSE)
+print(match_table, smd = TRUE)
+
+#alternative way to see mean difference
+df_colnames <- names(dta_m)[c(-1, -8, -14, -17, -18, -19)]
+dta_m %>%
+  group_by(treatment) %>%
+  select(one_of(df_colnames)) %>%
+  summarise_all(funs(mean))
+
+#t=test
+output = NULL
+for (i in 1:13){
+  name = df_colnames[i]
+  p_value = t.test(dta_m[, df_colnames[i]] ~ dta_m$treatment)$p.value
+  output <- rbind(output, data.frame(name, p_value))
+}
+print(output) #all significant
+
+
+# Estimating treatment effects
+with(dta_m, t.test(adopter ~ treatment))
+
+```
+I still got significant difference of all variables between control group and treatment group after nearest method matching. So does the result of t-test between adopter and treatment. The p-value of t-test is significant. As a result, I chose another matching method, the subclass method, to see if it can balance observed covariates of two groups better.
+
+
+Visual inspection to examine covariate balance in the matched sample. If the scatter points are located near the trend line, it means the matching is good. Yet the below plots show the nearest method still have improvement of well matching the treatment and control samples in all covariates.
+```{r}
+fn_bal <- function(dta, variable) {
+  dta$variable <- dta[, variable]
+  support <- c(min(dta$variable), max(dta$variable))
+  ggplot(dta, aes(x = distance, y = variable, color = treatment)) +
+    geom_point(alpha = 0.2, size = 1.3) +
+    geom_smooth(method = "loess", se = F) +
+    xlab("Propensity score") +
+    ylab(variable) +
+    theme_bw() +
+    ylim(support)
+}
+
+
+grid.arrange(
+  fn_bal(dta_m, "age"),
+  fn_bal(dta_m, "male") + theme(legend.position = "none"),
+  fn_bal(dta_m, "friend_cnt"),
+  fn_bal(dta_m, "avg_friend_age") + theme(legend.position = "none"),
+  fn_bal(dta_m, "avg_friend_male"),
+  fn_bal(dta_m, "friend_country_cnt") + theme(legend.position = "none"),
+  fn_bal(dta_m, "subscriber_friend_cnt"),
+  fn_bal(dta_m, "songsListened") + theme(legend.position = "none"),
+  nrow = 4, widths = c(10, 8)
+)
+
+
+grid.arrange(
+  fn_bal(dta_m, "lovedTracks"),
+  fn_bal(dta_m, "posts") + theme(legend.position = "none"),
+  fn_bal(dta_m, "playlists"),
+  fn_bal(dta_m, "shouts") + theme(legend.position = "none"),
+  fn_bal(dta_m, "adopter"),
+  fn_bal(dta_m, "tenure") + theme(legend.position = "none"),
+  fn_bal(dta_m, "good_country"),
+  nrow = 4, widths = c(10, 8)
+)
+```
+
+
+Propensity Score Matching – Method 2: subclassification (subclass)
+The subclass method is to loosely put “similar’’ observations (both treatment and control) into the same “subclass”. In this method, the treatment and control would be split into 6 subclasses. I decided to select the subclasses with lower mean difference than the value got from the nearest neighbor method, which are subclass 2,3,4,5 and subclass 2, 4 having better performance. I ended up choosing subclass 2, it has pretty low mean difference 0.093 and the mean distances of treatment and control are 0.2532 and 0.2439.
+
+For subclass 2, their treatment and control samples are 5026 and 1637. Looking to the overall performance of all subclasses, we got the mean distances of treatment and control 0.4982 and 0.4792, respectively. The mean difference is 0.0092. It improves balance of two groups by 94.6247%, in terms of their distance (propensity score).
+
+Mean difference for all variables refers to the below table. All the standardized mean differences, SMD, are lower than 0.1. It means that there is no huge difference between treated and control for all variables.
+```{r}
+#subclass matching approach using subclass method
+mod_match2 <- matchit(treatment ~ log(age) + male +log(friend_cnt+1) + log(avg_friend_age+1)  + log(avg_friend_male+1) + log(friend_country_cnt+1) + log(songsListened+1) + log(lovedTracks+1) + log(posts+1) + log(playlists+1) + log(shouts+1) + log(tenure+1) + good_country, method = 'subclass', data = df)
+                   
+summary(mod_match2, covariates = T)
+#plot(mod_match2)
+
+dta_m2 <- match.data(mod_match2)
+dta_m2 <- filter(dta_m2, subclass == 2)
+
+#create a TableOne to see Standardized Mean Difference
+match_table <- CreateTableOne(vars = xvars, strata = "treatment", data = dta_m2, test = FALSE)
+print(match_table, smd = TRUE)
+
+#alternative way to see mean difference
+df_colnames <- names(dta_m2)[c(-1, -8, -14, -17, -18, -19)]
+dta_m2 %>% 
+  group_by(treatment) %>%
+  select(one_of(df_colnames)) %>%
+  summarise_all(funs(mean))
+
+#t=test
+output = NULL
+for (i in 1:13){
+  name = df_colnames[i]
+  p_value = t.test(dta_m2[, df_colnames[i]] ~ dta_m2$treatment)$p.value
+  output <- rbind(output, data.frame(name, p_value))
+}
+print(output) 
+```
+In terms of t-test, all p-value in the subclass2 are not statistically significant (>0.05). So, there is no different between treatment and control group, which means that the observed covariates of two groups are balance.
+
+
+Visual Inspection: most of points are located near the trend line
+```{r}
+#Examining covariate balance in the matched sample
+grid.arrange(
+  fn_bal(dta_m2, "age"),
+  fn_bal(dta_m2, "male") + theme(legend.position = "none"),
+  fn_bal(dta_m2, "friend_cnt"),
+  fn_bal(dta_m2, "avg_friend_age") + theme(legend.position = "none"),
+  fn_bal(dta_m2, "avg_friend_male"),
+  fn_bal(dta_m2, "friend_country_cnt") + theme(legend.position = "none"),
+  fn_bal(dta_m2, "subscriber_friend_cnt"),
+  fn_bal(dta_m2, "songsListened") + theme(legend.position = "none"),
+  nrow = 4, widths = c(10, 8)
+)
+
+
+grid.arrange(
+  fn_bal(dta_m2, "lovedTracks"),
+  fn_bal(dta_m2, "posts") + theme(legend.position = "none"),
+  fn_bal(dta_m2, "playlists"),
+  fn_bal(dta_m2, "shouts") + theme(legend.position = "none"),
+  fn_bal(dta_m2, "adopter"),
+  fn_bal(dta_m2, "tenure") + theme(legend.position = "none"),
+  fn_bal(dta_m2, "good_country"),
+  nrow = 4, widths = c(10, 8)
+)
+```
+
+
+```{r}
+#put log data back to df
+#for (col in df_colnames) {
+ # tmp = mutate(dta_m, col = log(dta_m[,col]))
+#}
+dta_m = mutate(dta_m, age_log = log(dta_m[,'age']+1))
+dta_m = mutate(dta_m, male_new = dta_m[,'male'])
+dta_m = mutate(dta_m, friend_cnt_log = log(dta_m[,'friend_cnt'])+1)
+dta_m = mutate(dta_m, avg_friend_age_log = log(dta_m[,'avg_friend_age']+1))
+dta_m = mutate(dta_m, avg_friend_male_log = log(dta_m[,'avg_friend_male']+1))
+dta_m = mutate(dta_m, friend_country_cnt_log = log(dta_m[,'friend_country_cnt']+1))
+dta_m = mutate(dta_m, songsListened_log = log(dta_m[,'songsListened']+1))
+dta_m = mutate(dta_m, lovedTracks_log = log(dta_m[,'lovedTracks']+1))
+dta_m = mutate(dta_m, posts_log = log(dta_m[,'posts']+1))
+dta_m = mutate(dta_m, playlists_log = log(dta_m[,'playlists']+1))
+dta_m = mutate(dta_m, shouts_log = log(dta_m[,'shouts']+1))
+dta_m = mutate(dta_m, tenure_log = log(dta_m[,'tenure']+1))
+dta_m = mutate(dta_m, good_country_new = dta_m[,'good_country'])
+
+
+dta_m2 = mutate(dta_m2, age_log = log(dta_m2[,'age']+1))
+dta_m2 = mutate(dta_m2, male_new = dta_m2[,'male'])
+dta_m2 = mutate(dta_m2, friend_cnt_log = log(dta_m2[,'friend_cnt'])+1)
+dta_m2 = mutate(dta_m2, avg_friend_age_log = log(dta_m2[,'avg_friend_age']+1))
+dta_m2 = mutate(dta_m2, avg_friend_male_log = log(dta_m2[,'avg_friend_male']+1))
+dta_m2 = mutate(dta_m2, friend_country_cnt_log = log(dta_m2[,'friend_country_cnt']+1))
+dta_m2 = mutate(dta_m2, songsListened_log = log(dta_m2[,'songsListened']+1))
+dta_m2 = mutate(dta_m2, lovedTracks_log = log(dta_m2[,'lovedTracks']+1))
+dta_m2 = mutate(dta_m2, posts_log = log(dta_m2[,'posts']+1))
+dta_m2 = mutate(dta_m2, playlists_log = log(dta_m2[,'playlists']+1))
+dta_m2 = mutate(dta_m2, shouts_log = log(dta_m2[,'shouts']+1))
+dta_m2 = mutate(dta_m2, tenure_log = log(dta_m2[,'tenure']+1))
+dta_m2 = mutate(dta_m2, good_country_new = dta_m2[,'good_country'])
+```
+
+
+```{r}
+#mean differences of two natching methods 
+cols <- colnames(dta_m)[20:32]
+
+#1
+match_table <- CreateTableOne(vars = cols, strata = "treatment", data = dta_m, test = FALSE)
+print(match_table, smd = TRUE)
+
+#
+#dta_m %>%
+#  group_by(treatment) %>%
+#  select(one_of(cols)) %>%
+#  summarise_all(funs(mean))
+
+#2
+match_table <- CreateTableOne(vars = cols, strata = "treatment", data = dta_m2, test = FALSE)
+print(match_table, smd = TRUE)
+
+```
+
+treatment effect
+Finally, I used logistic regression to double check the result of the models to see if the treatment and control samples got balanced. 
+```{r}
+#t-test
+output = NULL
+for (i in 1:13){
+  name = cols[i]
+  p_value = t.test(dta_m[, cols[i]] ~ dta_m$treatment)$p.value
+  output <- rbind(output, data.frame(name, p_value))
+}
+print(output) #all significant
+
+
+#treatment effect
+lm_test1 <- glm(adopter~treatment, data = dta_m, family = binomial(), )
+summary(lm_test1)
+
+lm_test2 <- glm(adopter~treatment + age_log + male_new + friend_cnt_log + avg_friend_age_log
+                + avg_friend_male_log + friend_country_cnt_log + songsListened_log + lovedTracks_log 
+                + posts_log + playlists_log + shouts_log + tenure_log, data = dta_m, family = binomial())
+summary(lm_test2)
+
+#treatment effect
+lm_test3 <- glm(adopter~treatment, data = dta_m2, family = binomial(), )
+summary(lm_test3)
+
+lm_test4 <- glm(adopter~treatment + age_log + male_new + friend_cnt_log + avg_friend_age_log
+                + avg_friend_male_log + friend_country_cnt_log + songsListened_log + lovedTracks_log 
+                + posts_log + playlists_log + shouts_log + tenure_log, data = dta_m2, family = binomial())
+summary(lm_test4)
+```
+It shows that when only looking to the relationship between adopter and treatment, the p-value is significant. The coefficient of treatment variable is 0.73064, positively correlated with the adopter. However, if I put all the other variables (demographic variables, peer influence, user engagement variables) into logistic regression, the coefficient of treatment is still 0.71 or so, close to 0.73. Therefore, it means that whether or not I put other variables, the correlation of adopter and treatment is not affected. The treatment effect is solved.
+
+
+#4. Regression Analyses
+#logistic regression
+```{r}
+#put all variables into the regression
+lm1<- lm(adopter~  log(age) + male +log(friend_cnt+1) + log(avg_friend_age+1)  + log(avg_friend_male+1) +
+                       log(friend_country_cnt+1) + log(subscriber_friend_cnt + 1) + log(songsListened+1) + log(lovedTracks+1) + log(posts+1) +log(playlists+1) + log(shouts+1) + log(tenure+1) + good_country, data = df, family = binomial())
+summary(lm1)
+
+```
+First, use all variables (continuous variables is taken log transformation) into logistic regression. Adopter is dependent variable. The summary result shows that friend_cnt, avg_friend_male_log and friend_country_cnt_log are not significant, based on the alpha = 0.05. So, I removed these two variables in the second logistic regression model.
+
+
+In the second model, all variables are statistically significant.
+```{r}
+#remove non-significant variables
+lm2<- lm(adopter~ log(age) + male + log(avg_friend_age+1)  + log(subscriber_friend_cnt + 1) + log(songsListened+1) + log(lovedTracks+1) + log(posts+1) +log(playlists+1) + log(shouts+1) + log(tenure+1) + good_country, data = df, family = binomial())
+summary(lm2)
+
+#odd ratio
+exp(lm2$coefficients)
+
+```
+
+
+Based on ANOVA, the model 2 is better for simplicity.
+```{r}
+#ANOVA
+anova(lm1, lm2, test="Chisq")
+
+#multicollinearity
+library(car)
+vif(lm2)
+
+```
+
+
+The AUC of ROC Curve is 0.791, which is great.
+```{r}
+#ROC
+library(pROC)
+g = roc(df$adopter ~ predict(lm2, type = "response"))
+plot(g, print.thres = "best" ,print.auc=TRUE)
+#find the best threshold
+best_thres = coords(g, "best", ret=c("threshold", "specificity", "sensitivity"))
+print(best_thres)
+
+#for 1 unit increase in log(age), adopter will increase by the factor of exp()
+```
+
+Interpretation: 
+For every 1 unit increase in age, adopter will increase by a factor of 1.064.
+For every 1 unit increase in male, adopter will increase by a factor of 1.023.
+For every 1 unit increase in average friend’s age (avg_freind_age), adopter will increase by a factor of 1.026.
+For every 1 unit increase in subscriber friend count (subscriber_friend_cnt), adopter will increase by a factor of 1.095.
+For every 1 unit increase in songListened, adopter will increase by a factor of 1.006.
+For every 1 unit increase in loveTracked, adopter will increase by a factor of 1.020.
+For every 1 unit increase in posts, adopter will increase by a factor of 1.016.
+For every 1 unit increase in playlists, adopter will increase by a factor of 1.015.
+For every 1 unit increase in shouts, adopter will decrease by a factor of 1.020.
+For every 1 unit increase in tenure, adopter will decrease by a factor of 0.986.
+For every 1 unit increase in good country, adopter will decrease by a factor of 0.971.
+
+To sum up, the age, male, friend average age, subscriber friend count, song listened, love tracked, posts, and playlists are the variables which has positive correlation with adopter. 
+The variables of shouts, tenure, good country are negatively correlated with adopter, which means that these the higher three variables are, it is less likely to become premium users (adopter = 1).
+
+
+#5. Free-to-Fee strategy for HighNote
+According to the descriptive statistics and the models we built in the previous sections, it shows that, for example, the demographic variables, such as male and age, are positive related to the adopter. If a user who is a male with elder age, then he might be the target users for HighNote. So, it might be a good marketing strategy for HighNote to segment their users and find the aftermentioned target users (elder men) to do more advertising or personalized marketing.
+
+For the peer influence variables, if a user actively interacts with lots of subscriber friends whose age belongs to elder age, the user is more likely to continuously engage on HighNote and become the target premium users. So, the company could create more activities among users, such as community or word-of-mouth marketing, to increase peer influence and further convert free users to premium users.
+
+Regarding the user engagement variables, the company could create more interactions between company and users, such as public relation campaigns about sharing listened songs, loved tracks or playlists. These might help engaged users and keep using on this platform. Eventually, they will become premium users.
+
+Last but not the least, High Note should revamp several functions or services on platform, such as shouts or tenure, to attract users. Also, it is better for High Note to expand its oversea market, not just focused on US, UK, Germany since based on the model result, many premium users are from other countries outside US, UK, Germany and so forth. Therefore, it is a good chance to explore new market and reach out to the target users.
